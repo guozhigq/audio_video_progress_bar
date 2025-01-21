@@ -96,6 +96,7 @@ class ProgressBar extends LeafRenderObjectWidget {
     this.timeLabelType,
     this.timeLabelTextStyle,
     this.timeLabelPadding = 0.0,
+    this.segments,
   }) : super(key: key);
 
   /// The elapsed playing time of the media.
@@ -252,6 +253,8 @@ class ProgressBar extends LeafRenderObjectWidget {
   /// the progress bar and a negative number will move them closer.
   final double timeLabelPadding;
 
+  final List<List<double>>? segments;
+
   @override
   RenderObject createRenderObject(BuildContext context) {
     final theme = Theme.of(context);
@@ -282,6 +285,7 @@ class ProgressBar extends LeafRenderObjectWidget {
       timeLabelTextStyle: textStyle,
       timeLabelPadding: timeLabelPadding,
       textScaleFactor: textScaleFactor,
+      segments: segments,
     );
   }
 
@@ -314,7 +318,8 @@ class ProgressBar extends LeafRenderObjectWidget {
       ..timeLabelType = timeLabelType ?? TimeLabelType.totalTime
       ..timeLabelTextStyle = textStyle
       ..timeLabelPadding = timeLabelPadding
-      ..textScaleFactor = textScaleFactor;
+      ..textScaleFactor = textScaleFactor
+      ..segments = segments;
   }
 
   @override
@@ -430,6 +435,7 @@ class _RenderProgressBar extends RenderBox {
     TextStyle? timeLabelTextStyle,
     double timeLabelPadding = 0.0,
     double textScaleFactor = 1.0,
+    List<List<double>>? segments,
   })  : _total = total,
         _buffered = buffered,
         _onSeek = onSeek,
@@ -450,7 +456,8 @@ class _RenderProgressBar extends RenderBox {
         _timeLabelType = timeLabelType,
         _timeLabelTextStyle = timeLabelTextStyle,
         _timeLabelPadding = timeLabelPadding,
-        _textScaleFactor = textScaleFactor {
+        _textScaleFactor = textScaleFactor,
+        _segments = segments {
     _drag = _EagerHorizontalDragGestureRecognizer()
       ..onStart = _onDragStart
       ..onUpdate = _onDragUpdate
@@ -839,6 +846,13 @@ class _RenderProgressBar extends RenderBox {
   // The smallest that this widget would ever want to be.
   static const _minDesiredWidth = 100.0;
 
+  List<List<double>>? get segments => _segments;
+  List<List<double>>? _segments;
+  set segments(List<List<double>>? value) {
+    if (_segments == value) return;
+    _segments = value;
+  }
+
   @override
   double computeMinIntrinsicWidth(double height) => _minDesiredWidth;
 
@@ -1054,20 +1068,76 @@ class _RenderProgressBar extends RenderBox {
       ..strokeWidth = _barHeight;
     final capRadius = _barHeight / 2;
     final adjustedWidth = availableSize.width - barHeight;
-    final dx = widthProportion * adjustedWidth + capRadius;
-    final startPoint = Offset(capRadius, availableSize.height / 2);
-    var endPoint = Offset(dx, availableSize.height / 2);
-    canvas.drawLine(startPoint, endPoint, baseBarPaint);
+    if (_segments != null && _segments!.isNotEmpty && _total.inSeconds > 0) {
+      for (int i = 0; i < _segments!.length; i++) {
+        final segment = _segments![i];
+
+        /// 以空白为分割点 blockSegment
+        const double blockSpace = 3.0;
+
+        /// 以点为分割点 pointSegment
+        // 计算每段的起点和终点
+        final startDx = segment[0] / _total.inSeconds * adjustedWidth +
+            capRadius +
+            (segment[0] != 0 ? blockSpace : 0);
+        final endDx = segment[1] / _total.inSeconds * adjustedWidth +
+            capRadius +
+            (i != _segments!.length - 1 ? -blockSpace : 0);
+        final startPoint = Offset(startDx, availableSize.height / 2);
+        var endPoint = Offset(endDx, availableSize.height / 2);
+        canvas.drawLine(startPoint, endPoint, baseBarPaint);
+
+        /// 以点为分割点 pointSegment
+        // 绘制间隔点
+        // if (i < segments!.length - 1) {
+        //   final dotPaint = Paint()
+        //     ..color = Colors.black
+        //     ..style = PaintingStyle.fill;
+        //   final dotDx = endDx + capRadius;
+        //   final dotCenter = Offset(dotDx, availableSize.height / 2);
+        //   canvas.drawCircle(dotCenter, 4, dotPaint);
+        // }
+      }
+    } else {
+      final dx = widthProportion * adjustedWidth + capRadius;
+      final startPoint = Offset(capRadius, availableSize.height / 2);
+      var endPoint = Offset(dx, availableSize.height / 2);
+      canvas.drawLine(startPoint, endPoint, baseBarPaint);
+    }
   }
 
   void _drawThumb(Canvas canvas, Size localSize) {
     final thumbPaint = Paint()..color = thumbColor;
     final barCapRadius = _barHeight / 2;
     final availableWidth = localSize.width - _barHeight;
-    var thumbDx = _thumbValue * availableWidth + barCapRadius;
+    const blockSpace = 3.0; // 间隔的宽度
+
+    // 计算总的间隔宽度
+    final totalBlockSpace = (_segments!.length - 1) * blockSpace;
+
+    // 计算实际可用宽度
+    final adjustedWidth = availableWidth - totalBlockSpace;
+
+    // 根据当前拇指值计算拇指的 x 坐标
+    var thumbDx = _thumbValue * adjustedWidth + barCapRadius;
+
+    // 计算拇指所在的段落，并加上之前段落的间隔宽度
+    double accumulatedWidth = 0.0;
+    for (int i = 0; i < _segments!.length - 1; i++) {
+      final segment = _segments![i];
+      final segmentWidth =
+          (segment[1] - segment[0]) / _total.inSeconds * adjustedWidth;
+      if (thumbDx <= accumulatedWidth + segmentWidth) {
+        thumbDx += i * blockSpace;
+        break;
+      }
+      accumulatedWidth += segmentWidth;
+    }
+
     if (!_thumbCanPaintOutsideBar) {
       thumbDx = thumbDx.clamp(_thumbRadius, localSize.width - _thumbRadius);
     }
+
     final center = Offset(thumbDx, localSize.height / 2);
     if (_userIsDraggingThumb) {
       final thumbGlowPaint = Paint()..color = thumbGlowColor;
